@@ -37,7 +37,7 @@ jobs:
       - name: Run pipeline
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: python scripts/run_pipeline.py "${{ inputs.video_url }}"
+        run: python -m scripts.run_pipeline "${{ inputs.video_url }}"
 
       - name: Build dashboard
         run: python -c "from src.dashboard import build_dashboard; build_dashboard('data/results.db', 'site')"
