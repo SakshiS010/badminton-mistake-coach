@@ -29,7 +29,7 @@ def main(video_url: str, db_path: str = "data/results.db", tmp_dir: str = "/tmp/
         return 1
 
     try:
-        mistakes = extract_mistakes(transcript, api_key=os.environ.get("GEMINI_API_KEY", "test"))
+        mistakes = extract_mistakes(transcript, api_key=os.environ["GEMINI_API_KEY"])
     except ExtractionError as e:
         storage.save_failed_extraction(video_id, download_result["title"], str(e))
         print(f"Extraction failed, saved for review: {e}", file=sys.stderr)

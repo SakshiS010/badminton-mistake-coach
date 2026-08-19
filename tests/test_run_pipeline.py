@@ -6,7 +6,8 @@ from scripts.run_pipeline import main
 @patch("scripts.run_pipeline.extract_mistakes")
 @patch("scripts.run_pipeline.transcribe")
 @patch("scripts.run_pipeline.download_audio")
-def test_main_happy_path(mock_download, mock_transcribe, mock_extract, tmp_path):
+def test_main_happy_path(mock_download, mock_transcribe, mock_extract, tmp_path, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     db_path = str(tmp_path / "results.db")
     mock_download.return_value = {
         "audio_path": "/tmp/audio/abc123.mp3",
@@ -63,7 +64,8 @@ def test_main_returns_1_on_download_failure(mock_download, tmp_path):
 @patch("scripts.run_pipeline.extract_mistakes")
 @patch("scripts.run_pipeline.transcribe")
 @patch("scripts.run_pipeline.download_audio")
-def test_main_saves_failure_on_extraction_error(mock_download, mock_transcribe, mock_extract, tmp_path):
+def test_main_saves_failure_on_extraction_error(mock_download, mock_transcribe, mock_extract, tmp_path, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
     from src.extractor import ExtractionError
     db_path = str(tmp_path / "results.db")
     mock_download.return_value = {
