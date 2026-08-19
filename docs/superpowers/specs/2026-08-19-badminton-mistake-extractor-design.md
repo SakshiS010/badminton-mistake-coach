@@ -22,54 +22,87 @@ how this phase feeds into it later.
 
 A manually-triggered pipeline: given one YouTube video URL, produce a
 list of (timestamp, mistake, fix) entries extracted from the coach's
-spoken commentary, in the coach's original language, viewable on a local
-dashboard.
+spoken commentary, in the coach's original language, viewable on a
+published dashboard. All downloading/transcribing/processing runs on
+GitHub Actions' free hosted runners, not on the user's device — no
+video or audio file is ever stored locally.
 
 Explicitly out of scope for this spec:
-- Automatic detection of new channel uploads / scheduling (Approach A
-  from brainstorming — becomes its own future spec once this pipeline
-  is proven manually).
+- Automatic detection of new channel uploads (scheduled runs) —
+  becomes its own future spec once this pipeline is proven via manual
+  trigger. See "Future: scheduled automation" below.
 - Any visual/computer-vision mistake detection (Phase 2, see below).
-- Multi-user access, auth, or deployment — this is a local personal tool.
+- Multi-user access or auth — this is a personal tool with a public
+  results page (see "Repo & Pages visibility" below).
 
 ## Architecture
 
-Five components, each independently testable:
+Five components, each independently testable. The first three run
+inside a GitHub Actions workflow job, not on the user's machine:
 
 1. **Downloader** — uses `yt-dlp` to pull audio + metadata (title, video
-   ID, upload date) for a given YouTube URL.
-2. **Transcriber** — local Whisper model (CPU, no GPU required) produces
-   a timestamped transcript and auto-detects the spoken language.
-3. **Mistake Extractor** — sends the transcript to an LLM with
-   instructions to identify "mistake named → fix given" moments and
-   return them as structured data: `{timestamp, mistake, fix}`, written
-   in the same language as the transcript.
-4. **Storage** — local SQLite database. One row per video, one row per
-   extracted mistake/fix pair, linked by video ID.
-5. **Dashboard** — a single local, server-rendered HTML page (no
-   framework, no build step) listing processed videos newest-first,
-   each expandable to show its mistake/fix pairs with clickable
-   timestamps (`youtu.be/<id>?t=<seconds>`) linking back into the video.
+   ID, upload date) for a given YouTube URL. Runs on the Actions
+   runner; the audio file lives only on the runner's ephemeral disk
+   and is discarded automatically when the job ends.
+2. **Transcriber** — Whisper (CPU, no GPU required — Actions runners
+   have no GPU anyway) produces a timestamped transcript and
+   auto-detects the spoken language. Also runs on the runner; the full
+   transcript is used in-job and is **not** persisted afterward (see
+   privacy note below).
+3. **Mistake Extractor** — sends the transcript to an LLM (API key
+   stored as a GitHub Actions repository secret) with instructions to
+   identify "mistake named → fix given" moments and return them as
+   structured data: `{timestamp, mistake, fix}`, written in the same
+   language as the transcript.
+4. **Storage** — a small SQLite (or JSON) file checked into the repo.
+   Only the curated output of step 3 is committed — video ID, title,
+   timestamp, mistake, fix. The full raw transcript is intentionally
+   **not** committed, to limit what becomes publicly visible (see
+   below).
+5. **Dashboard** — a static HTML page regenerated from the results
+   file at the end of each workflow run and published to **GitHub
+   Pages**, so it's viewable at a URL without running anything
+   locally. Lists processed videos newest-first, each expandable to
+   its mistake/fix pairs with clickable timestamps
+   (`youtu.be/<id>?t=<seconds>`) linking back into the video.
+
+**Trigger**: `workflow_dispatch` with a `video_url` input — you run it
+from the GitHub Actions UI (or `gh workflow run`) with the URL of the
+video to process.
+
+## Repo & Pages visibility
+
+GitHub Pages' free tier only serves public repos (private-repo Pages
+needs a paid GitHub plan). So this repo must be public: the workflow
+code and the committed results file (curated mistake/fix pairs) are
+visible to anyone with the link. Raw full transcripts are kept out of
+the repo entirely specifically to minimize what's exposed under that
+constraint — only the same curated summary that appears on the
+dashboard ever gets persisted.
 
 ## Data flow
 
 ```
-URL → Downloader (audio + metadata)
-    → Transcriber (timestamped transcript + detected language)
+[GitHub Actions runner, triggered manually with a video URL]
+  Downloader (audio + metadata, ephemeral)
+    → Transcriber (timestamped transcript + detected language, ephemeral)
     → Mistake Extractor (structured mistake/fix list, in original language)
-    → Storage (SQLite)
-    → Dashboard (reads from storage, renders HTML)
+    → commit curated results to repo (SQLite/JSON — small, text-only)
+[end of job — audio/transcript discarded, nothing persists but the results]
+
+[on push] → GitHub Pages rebuild → static dashboard published
 ```
 
 ## Error handling
 
 - **Dedup**: video ID is checked against storage before processing;
   already-processed videos are skipped, not reprocessed.
-- **Download failure** (private/removed/region-locked video): logged
-  and skipped; does not crash the run.
-- **Transcription failure** (corrupt/empty audio): video marked
-  `failed` in storage with a reason, visible on the dashboard, so it
-  can be retried later rather than silently disappearing.
+- **Download failure** (private/removed/region-locked video): the
+  workflow job fails with a clear log message; nothing is committed.
+  Since all state is ephemeral on the runner, there's nothing to clean
+  up — just re-run with a valid URL.
+- **Transcription failure** (corrupt/empty audio): same — job fails
+  with a logged reason, nothing partial gets committed to the repo.
 - **Malformed LLM output**: the extractor validates the returned JSON
   against an expected schema. On failure it retries once, then falls
   back to storing the raw LLM output for manual review rather than
@@ -111,10 +144,13 @@ actual go/no-go gate for Phase 2 — it needs its own brainstorming
 session to scope model choice, labeling effort, and realistic accuracy
 expectations once that data exists.
 
-## Future: Approach A (scheduled automation)
+## Future: scheduled automation
 
-After Phase 1 is proven working via manual trigger, wrap it in a
-scheduled poll (e.g. Task Scheduler / cron checking the channel's
-upload feed every few hours) so new uploads are processed
-automatically. Deferred to its own follow-up spec so pipeline
-correctness and scheduling behavior aren't debugged simultaneously.
+After Phase 1 is proven working via manual `workflow_dispatch` runs,
+automatic detection of new channel uploads can reuse the same GitHub
+Actions workflow almost unchanged: add a `schedule:` trigger (cron,
+also free) that checks the channel's upload feed and calls the
+existing job for anything new, instead of a human supplying the URL.
+No new infrastructure needed — same runner, same pipeline. Still
+deferred to its own follow-up spec so pipeline correctness and
+scheduling behavior aren't debugged simultaneously.
